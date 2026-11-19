@@ -1,0 +1,91 @@
+# ==========================================
+# 电脑端 (宽屏) 一键打包上传脚本
+# ==========================================
+$ErrorActionPreference = "Continue"
+Write-Host "1. 清理旧文件..." -ForegroundColor Cyan
+Remove-Item -Recurse -Force build, docs, __pycache__ -ErrorAction SilentlyContinue
+
+Write-Host "2. 打包中... (如果卡在下载模板，直接按 Ctrl+C 中断即可)" -ForegroundColor Cyan
+$env:PYTHONUTF8="1"
+python -m pygbag --build --ume_block 0 main.py
+
+Write-Host "3. 检查核心包..." -ForegroundColor Cyan
+if (-not (Test-Path build\web\main.tar.gz)) {
+    Write-Host "❌ 打包失败！找不到 main.tar.gz，请往上查看红色报错代码。" -ForegroundColor Red
+    Pause; exit
+}
+
+Write-Host "4. 组装 docs 目录..." -ForegroundColor Cyan
+New-Item -ItemType Directory -Path docs -Force | Out-Null
+Copy-Item -Path build\web\* -Destination docs -Recurse -Force
+
+# 补充 browserfs 文件
+$bfs = "F:\py_project\pythonProject\lianliankan\docs\browserfs.min.js"
+if (Test-Path $bfs) { Copy-Item $bfs -Destination docs\ -Force }
+
+# 写入电脑端专属 HTML (居中 contain 黑边)
+$html = @"
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" href="data:,">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>振华连连看 - 电脑版</title>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #1a1e2a; display: flex; justify-content: center; align-items: center; }
+        canvas { display: block; max-width: 100vw; max-height: 100vh; object-fit: contain; image-rendering: crisp-edges; touch-action: none; }
+        #pyconsole, #terminal, #status, #progress, #infobox, #transfer, #system { display: none !important; }
+    </style>
+    <script src="browserfs.min.js"></script>
+</head>
+<body>
+    <script type="application/javascript">config = { cdn: "https://pygame-web.github.io/cdn/0.9.3/", archive: "main", _sdl2: "canvas", gui_divider: 2, ume_block: 0, can_close: 0, autorun: 0, PYBUILD: "3.12" }</script>
+    <script src="https://pygame-web.github.io/cdn/0.9.3/pythons.js" type="module" id="site" data-os="vtx,gui" data-cdn="https://pygame-web.github.io/cdn/0.9.3/" async defer>
+#<!--
+import asyncio, platform, tarfile
+from pathlib import Path
+async def custom_site():
+    platform.document.body.style.background = "#1a1e2a"
+    platform.window.transfer.hidden = True
+    platform.window.canvas.style.visibility = "visible"
+    bundle = "main"
+    appdir = Path(f"/data/data/{bundle}")
+    appdir.mkdir(exist_ok=True)
+    async with platform.fopen(f"{bundle}.tar.gz", "rb") as archive:
+        tar = tarfile.open(fileobj=archive, mode="r:gz")
+        tar.extractall(path=appdir.as_posix(), filter='tar')
+        tar.close()
+    platform.run_main(PyConfig, loaderhome= appdir / "assets", loadermain=None)
+    import embed
+    while embed.counter() < 0:
+        await asyncio.sleep(.1)
+    main = appdir / "assets" / "main.py"
+    if not platform.window.MM.UME:
+        while not platform.window.MM.UME:
+            await asyncio.sleep(.1)
+    await TopLevel_async_handler.start_toplevel(platform.shell, console=False)
+    __import__(__name__).__file__ = main
+    await shell.source(main)
+    platform.window.infobox.style.display = "none"
+    platform.window.window_resize()
+    shell.interactive()
+asyncio.run(custom_site())
+# --></script>
+    <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex=1></canvas>
+    <div id="infobox" style="display:none;">Loading...</div>
+</body>
+</html>
+"@
+Set-Content -Path docs\index.html -Value $html -Encoding UTF8
+New-Item -ItemType File -Path docs\.nojekyll -Force | Out-Null
+
+Write-Host "5. 推送到 GitHub..." -ForegroundColor Cyan
+cd docs
+git add .
+git commit -m "Auto-deploy: PC"
+git push -f origin main
+cd ..
+
+Write-Host "🎉 电脑端部署成功！请去网页查看！" -ForegroundColor Magenta
+Pause
